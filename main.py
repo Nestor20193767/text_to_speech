@@ -1,43 +1,59 @@
 import streamlit as st
-import PyPDF2
+from PyPDF2 import PdfReader
+from gtts import gTTS
+from pydub import AudioSegment
 import uuid
 import os
-import time
-import pyttsx3
+import io
+import tempfile
+import math
 
-st.set_page_config(page_title="PDF a Audio", layout="centered")
-st.title("📄➡️🔊 Convertir PDF a Audio (Offline)")
+st.title("📄➡️🔊 Convertir PDF a Audio (Gratis con gTTS)")
+st.info("Funciona en fragmentos para evitar errores de gTTS.")
 
-nombre_audio = st.text_input("📝 Nombre del archivo de audio (sin extensión):", "mi_audio")
-archivo_pdf = st.file_uploader("Sube tu archivo PDF", type=["pdf"])
+nombre_audio = st.text_input("Nombre del archivo de audio:", "mi_audio")
+archivo_pdf = st.file_uploader("Sube tu archivo PDF", type="pdf")
+
+def dividir_texto(texto, max_chars=1000):
+    partes = []
+    while len(texto) > max_chars:
+        corte = texto[:max_chars].rfind(".") + 1
+        if corte == 0:
+            corte = max_chars
+        partes.append(texto[:corte])
+        texto = texto[corte:]
+    partes.append(texto)
+    return partes
 
 if archivo_pdf is not None:
-    lector_pdf = PyPDF2.PdfReader(archivo_pdf)
+    lector = PdfReader(archivo_pdf)
     texto = ""
-    with st.spinner("📄 Extrayendo texto del PDF..."):
-        for pagina in lector_pdf.pages:
-            texto += pagina.extract_text()
-            time.sleep(0.05)
+    for pagina in lector.pages:
+        texto += pagina.extract_text() or ""
 
-    if texto:
-        if st.button("🔊 Convertir a Audio"):
-            progreso = st.progress(0, text="🎙️ Convirtiendo texto a audio...")
-            for i in range(1, 101):
-                progreso.progress(i, text=f"🎙️ Convirtiendo... {i}%")
-                time.sleep(0.01)
+    if st.button("🔊 Convertir a audio"):
+        partes = dividir_texto(texto)
+        st.info(f"Texto dividido en {len(partes)} fragmentos...")
 
-            nombre_unico = f"{nombre_audio}_{uuid.uuid4().hex[:8]}.mp3"
-            engine = pyttsx3.init()
-            engine.save_to_file(texto, nombre_unico)
-            engine.runAndWait()
+        audio_final = AudioSegment.empty()
+        progress = st.progress(0)
+        status = st.empty()
 
-            st.success("✅ Conversión completada")
-            with open(nombre_unico, "rb") as audio_file:
-                audio_bytes = audio_file.read()
-                st.audio(audio_bytes, format="audio/mp3")
-                st.download_button(label="⬇️ Descargar Audio", data=audio_bytes, file_name=nombre_unico, mime="audio/mp3")
+        for i, parte in enumerate(partes):
+            status.text(f"Procesando fragmento {i + 1} de {len(partes)}...")
+            tts = gTTS(text=parte, lang="es")
+            temp_fp = io.BytesIO()
+            tts.write_to_fp(temp_fp)
+            temp_fp.seek(0)
+            audio_segment = AudioSegment.from_file(temp_fp, format="mp3")
+            audio_final += audio_segment
+            progress.progress((i + 1) / len(partes))
 
-            os.remove(nombre_unico)
-    else:
-        st.warning("⚠️ No se pudo extraer texto del PDF.")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+            audio_final.export(f.name, format="mp3")
+            with open(f.name, "rb") as a:
+                st.audio(a.read(), format="audio/mp3")
+                st.download_button("⬇️ Descargar Audio", a, f"{nombre_audio}.mp3", mime="audio/mp3")
 
+        progress.empty()
+        status.text("✅ Conversión completa")
